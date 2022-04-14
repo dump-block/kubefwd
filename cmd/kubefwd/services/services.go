@@ -19,6 +19,9 @@ package services
 import (
 	"context"
 	"fmt"
+	"golang.org/x/net/proxy"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -59,6 +62,7 @@ var mappings []string
 var isAllNs bool
 var fwdConfigurationPath string
 var fwdReservations []string
+var proxyURL string
 
 func init() {
 	// override error output from k8s.io/apimachinery/pkg/util/runtime
@@ -74,6 +78,7 @@ func init() {
 	Cmd.Flags().StringP("field-selector", "f", "", "Field selector to filter on; supports '=', '==', and '!=' (e.g. -f metadata.name=service-name).")
 	Cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output.")
 	Cmd.Flags().StringVarP(&domain, "domain", "d", "", "Append a pseudo domain name to generated host names.")
+	Cmd.Flags().StringVarP(&proxyURL, "proxy", "p", "", "--proxy socks5://127.0.0.1:54321")
 	Cmd.Flags().StringSliceVarP(&mappings, "mapping", "m", []string{}, "Specify a port mapping. Specify multiple mapping by duplicating this argument.")
 	Cmd.Flags().BoolVarP(&isAllNs, "all-namespaces", "A", false, "Enable --all-namespaces option like kubectl.")
 	Cmd.Flags().StringSliceVarP(&fwdReservations, "reserve", "r", []string{}, "Specify an IP reservation. Specify multiple reservations by duplicating this argument.")
@@ -277,9 +282,20 @@ Try:
 		if err != nil {
 			log.Fatalf("Error generating REST configuration: %s\n", err.Error())
 		}
-
+		if proxyURL != "" {
+			parse, err := url.Parse(proxyURL)
+			if err != nil {
+				log.Fatalf("proxy error %s", err)
+			}
+			if d, err := proxy.FromURL(parse, proxy.Direct); err == nil {
+				restConfig.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+					return d.Dial(network, address)
+				}
+			}
+		}
 		// create the k8s clientSet
 		clientSet, err := kubernetes.NewForConfig(restConfig)
+
 		if err != nil {
 			log.Fatalf("Error creating k8s clientSet: %s\n", err.Error())
 		}
